@@ -1,0 +1,337 @@
+@import "tailwindcss";
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Personal Health Copilot — design tokens
+   Calm, trustworthy healthcare palette. Light background, teal/blue accents,
+   soft shadows, generous rounding. No heavy gradients.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  --font-sans: "Inter", "Noto Sans Devanagari", ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Brand — calm clinical teal */
+  --color-brand-50: #eefbf7;
+  --color-brand-100: #d5f5ec;
+  --color-brand-200: #aeead9;
+  --color-brand-300: #7bd8c2;
+  --color-brand-400: #45bda5;
+  --color-brand-500: #22a189;
+  --color-brand-600: #15816f;
+  --color-brand-700: #14675a;
+  --color-brand-800: #14524a;
+  --color-brand-900: #14453f;
+
+  /* Info — trust blue */
+  --color-info-50: #eff6ff;
+  --color-info-100: #dbeafe;
+  --color-info-500: #3b82f6;
+  --color-info-600: #2563eb;
+  --color-info-700: #1d4ed8;
+
+  /* Semantic health states */
+  --color-good-50: #ecfdf5;
+  --color-good-100: #d1fae5;
+  --color-good-600: #059669;
+  --color-good-700: #047857;
+
+  --color-watch-50: #fffbeb;
+  --color-watch-100: #fef3c7;
+  --color-watch-600: #d97706;
+  --color-watch-700: #b45309;
+
+  --color-alert-50: #fff1f2;
+  --color-alert-100: #ffe4e6;
+  --color-alert-600: #e11d48;
+  --color-alert-700: #be123c;
+
+  /* Neutrals */
+  --color-ink-50: #f8fafc;
+  --color-ink-100: #f1f5f9;
+  --color-ink-200: #e6ebf1;
+  --color-ink-300: #cbd5e1;
+  --color-ink-400: #94a3b8;
+  --color-ink-500: #64748b;
+  --color-ink-600: #475569;
+  --color-ink-700: #334155;
+  --color-ink-800: #1e293b;
+  --color-ink-900: #0f172a;
+
+  /* Surfaces — remapped for dark mode (replaces hard-coded white / page tint) */
+  --color-surface: #ffffff;
+  --color-canvas: #f7faf9;
+  --color-chart-grid: #e6ebf1;
+  --color-chart-primary: #15816f;
+  --color-chart-accent: #2563eb;
+  --color-chart-point: #22a189;
+
+  --radius-card: 1.25rem;
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04),
+    0 8px 24px -12px rgba(15, 23, 42, 0.12);
+  --shadow-lift: 0 2px 4px rgba(15, 23, 42, 0.04),
+    0 16px 40px -16px rgba(15, 23, 42, 0.18);
+
+  --animate-fade-in: fade-in 0.35s ease-out both;
+  --animate-slide-up: slide-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-pulse-ring: pulse-ring 1.8s ease-out infinite;
+  --animate-blink: blink 4s infinite;
+  --animate-talk: talk 0.5s ease-in-out infinite;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes blink {
+  0%, 46%, 54%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.1); }
+}
+@keyframes talk {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(2.2); }
+}
+@keyframes pulse-ring {
+  0% { transform: scale(0.9); opacity: 0.7; }
+  70% { transform: scale(1.6); opacity: 0; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Dark theme. Applied by the `dark` class on <html> (see theme-toggle.tsx and
+   the no-flash script in app/layout.tsx). Every colour in the app is a token,
+   so remapping tokens here re-skins dialogs, charts, the assistant, etc.
+   Text/background pairs keep WCAG AA contrast (≥4.5:1 for body text).
+   ══════════════════════════════════════════════════════════════════════════ */
+.dark {
+  color-scheme: dark;
+
+  --color-surface: #131c2e;
+  --color-canvas: #0b1220;
+  --color-chart-grid: #2a3850;
+  --color-chart-primary: #4cc2aa;
+  --color-chart-accent: #60a5fa;
+  --color-chart-point: #34b89f;
+
+  --color-brand-50: #0f2e2a;
+  --color-brand-100: #14403a;
+  --color-brand-200: #1b5a50;
+  --color-brand-300: #3fb39c;
+  --color-brand-400: #4cc2aa;
+  --color-brand-500: #5fd0b8;
+  --color-brand-600: #1f8f7a;
+  --color-brand-700: #1a7a68;
+  --color-brand-800: #a7f0df;
+  --color-brand-900: #d5f5ec;
+
+  --color-info-50: #0f1f3d;
+  --color-info-100: #14284f;
+  --color-info-500: #60a5fa;
+  --color-info-600: #60a5fa;
+  --color-info-700: #93c5fd;
+
+  --color-good-50: #0d2a1f;
+  --color-good-100: #134432;
+  --color-good-600: #34d399;
+  --color-good-700: #6ee7b7;
+
+  --color-watch-50: #2b2108;
+  --color-watch-100: #3d2e0c;
+  --color-watch-600: #fbbf24;
+  --color-watch-700: #fcd34d;
+  --color-watch-800: #fde68a;
+
+  --color-alert-50: #2d1116;
+  --color-alert-100: #471a22;
+  --color-alert-600: #fb7185;
+  --color-alert-700: #fda4af;
+
+  --color-ink-50: #172135;
+  --color-ink-100: #1d2a40;
+  --color-ink-200: #2a3850;
+  --color-ink-300: #3b4a64;
+  --color-ink-400: #64748b;
+  --color-ink-500: #9aa8bc;
+  --color-ink-600: #aab6c8;
+  --color-ink-700: #cbd5e1;
+  --color-ink-800: #e2e8f0;
+  --color-ink-900: #f8fafc;
+}
+
+.dark body {
+  background-color: var(--color-canvas);
+}
+
+/* Solid brand buttons keep white text; only the pressed state needs a tweak */
+.dark .bg-brand-600:active {
+  background-color: #15665a;
+}
+
+/* Native form controls and scrollbars follow the theme */
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: var(--color-ink-500);
+}
+
+/* Ensure the focus ring stays visible on dark surfaces */
+.dark :focus-visible {
+  outline-color: #5fd0b8;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+@layer base {
+  :root {
+    /* Accessibility multipliers driven by .easy-read / .large-text / .high-contrast */
+    --a11y-scale: 1;
+    --a11y-line-height: 1.6;
+    --a11y-tap: 2.75rem; /* 44px — WCAG 2.5.5 target size */
+    --a11y-card-pad: 1.25rem;
+    --a11y-muted: var(--color-ink-500);
+    --a11y-border: var(--color-ink-200);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-size: calc(1rem * var(--a11y-scale));
+    line-height: var(--a11y-line-height);
+    background-color: var(--color-canvas);
+    color: var(--color-ink-800);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  /* Visible, high-contrast focus ring everywhere (keyboard navigation) */
+  :focus-visible {
+    outline: 3px solid var(--color-brand-500);
+    outline-offset: 2px;
+    border-radius: 0.5rem;
+  }
+
+  ::selection {
+    background: var(--color-brand-100);
+    color: var(--color-brand-900);
+  }
+
+  /* Hindi (Devanagari) benefits from a slightly looser rhythm */
+  :lang(hi) {
+    letter-spacing: 0.005em;
+  }
+
+  h1, h2, h3, h4 {
+    color: var(--color-ink-900);
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    line-height: 1.25;
+  }
+
+  /* Respect users who ask for less motion */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* ── Accessibility modes ──────────────────────────────────────────────── */
+@layer base {
+  /* Easy Read Mode: bigger text, taller lines, bigger targets, calmer surfaces */
+  .easy-read {
+    --a11y-scale: 1.18;
+    --a11y-line-height: 1.75;
+    --a11y-tap: 3.25rem; /* 52px */
+    --a11y-card-pad: 1.5rem;
+    --a11y-muted: var(--color-ink-600);
+    --a11y-border: var(--color-ink-300);
+  }
+  .easy-read .a11y-hide { display: none; }        /* hides decorative clutter */
+  .easy-read .a11y-clutter { opacity: 0.35; }      /* de-emphasises secondary UI */
+  .easy-read [data-slot="card"] { box-shadow: var(--shadow-soft); }
+
+  .large-text {
+    --a11y-scale: 1.25;
+    --a11y-line-height: 1.8;
+    --a11y-tap: 3.25rem;
+  }
+  .large-text.easy-read {
+    --a11y-scale: 1.32;
+  }
+
+  .high-contrast {
+    --a11y-muted: var(--color-ink-800);
+    --a11y-border: var(--color-ink-800);
+  }
+  .high-contrast body {
+    background-color: #ffffff;
+  }
+  .high-contrast [data-slot="card"],
+  .high-contrast [data-slot="input"],
+  .high-contrast [data-slot="button"] {
+    border-color: var(--color-ink-800) !important;
+    border-width: 2px;
+  }
+  .high-contrast a,
+  .high-contrast [data-slot="button"] {
+    text-underline-offset: 3px;
+  }
+}
+
+/* ── Utilities ────────────────────────────────────────────────────────── */
+@layer utilities {
+  .text-muted {
+    color: var(--a11y-muted);
+  }
+  .surface-border {
+    border-color: var(--a11y-border);
+  }
+  .tap-target {
+    min-height: var(--a11y-tap);
+    min-width: var(--a11y-tap);
+  }
+  .card-pad {
+    padding: var(--a11y-card-pad);
+  }
+  /* Never allow horizontal scrolling on small screens */
+  .no-scroll-x {
+    overflow-x: hidden;
+    max-width: 100%;
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-ink-300) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    height: 6px;
+    width: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: var(--color-ink-300);
+    border-radius: 9999px;
+  }
+  .focus-ring {
+    outline: 3px solid var(--color-brand-500);
+    outline-offset: 2px;
+  }
+}
+
+/* Recharts polish: readable tick labels in both languages */
+.recharts-cartesian-axis-tick text {
+  fill: var(--a11y-muted);
+  font-size: 0.8rem;
+}
+.recharts-surface:focus {
+  outline: none;
+}
