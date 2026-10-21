@@ -1,6 +1,6 @@
-import { evaluateAgainstRange, metricKeyForTestName } from "@/lib/health/metrics";
+import { classifyLabResult, CLASSIFICATION_RULE_VERSION, metricKeyForTestName, parseReferenceRange } from "@/lib/health/metrics";
 import { RECORD_TYPES, type RecordType } from "@/types/domain";
-import type { ExtractedDocument, ExtractedLabValue, ExtractedMedicine, OcrTextResult } from "./types";
+import type { ExtractedDocument, ExtractedLabValue, ExtractedMedicine, OcrPage, OcrTextResult } from "./types";
 
 /**
  * Text → structure.
@@ -30,28 +30,33 @@ const MONTHS: Record<string, number> = {
 
 // ── Dates ───────────────────────────────────────────────────────────────────
 
+function makeValidDate(year: number, month: number, day: number): Date | null {
+  const date = new Date(year, month, day);
+  return date.getFullYear() === year && date.getMonth() === month && date.getDate() === day ? date : null;
+}
+
 export function parseDateFromText(text: string): Date | null {
   const numeric = text.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\b/);
   if (numeric) {
     const day = Number(numeric[1]);
     const month = Number(numeric[2]) - 1;
     const year = Number(numeric[3]);
-    const date = new Date(year, month, day);
-    if (!Number.isNaN(date.getTime()) && day <= 31 && month >= 0 && month <= 11) return date;
+    const date = makeValidDate(year, month, day);
+    if (date) return date;
   }
 
   const iso = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
   if (iso) {
-    const date = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
-    if (!Number.isNaN(date.getTime())) return date;
+    const date = makeValidDate(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+    if (date) return date;
   }
 
   const written = text.match(/\b(\d{1,2})[\s-]([A-Za-z]{3,9})[\s,-]+(\d{4})\b/);
   if (written) {
     const month = MONTHS[written[2].toLowerCase()];
     if (month !== undefined) {
-      const date = new Date(Number(written[3]), month, Number(written[1]));
-      if (!Number.isNaN(date.getTime())) return date;
+      const date = makeValidDate(Number(written[3]), month, Number(written[1]));
+      if (date) return date;
     }
   }
 
@@ -59,8 +64,8 @@ export function parseDateFromText(text: string): Date | null {
   if (monthFirst) {
     const month = MONTHS[monthFirst[1].toLowerCase()];
     if (month !== undefined) {
-      const date = new Date(Number(monthFirst[3]), month, Number(monthFirst[2]));
-      if (!Number.isNaN(date.getTime())) return date;
+      const date = makeValidDate(Number(monthFirst[3]), month, Number(monthFirst[2]));
+      if (date) return date;
     }
   }
 
@@ -148,80 +153,123 @@ export function parseMedicines(lines: string[]): ExtractedMedicine[] {
 
 // ── Lab values ──────────────────────────────────────────────────────────────
 
-const LAB_FLAGS = /^(h|high|l|low|hh|ll|critical|abnormal|↑|↓)\b/i;
+const LAB_FLAGS = /^(?:HH|LL|CRITICAL(?:\s+(?:HIGH|LOW))?|PANIC|H|HIGH|L|LOW|↑|↓)$/i;
 const UNIT_PATTERN =
-  /^(g\/dl|gm\/dl|mg\/dl|mg\/l|mmol\/l|µiu\/ml|uiu\/ml|miu\/l|iu\/l|ng\/ml|pg\/ml|%|bpm|kg|cm|mmhg|10\^?3\/[µu]l|cells\/[µu]l|million\/[µu]l|fl|pg|sec|mm\/hr|ratio|units?\/l)$/i;
+  /^(g\/dl|gm\/dl|g\/l|mg\/dl|mg\/l|mmol\/l|µiu\/ml|μiu\/ml|uiu\/ml|miu\/l|iu\/l|ng\/ml|pg\/ml|%|bpm|kg|cm|mmhg|10\^?3\/[µu]l|cells\/[µu]l|million\/[µu]l|fl|pg|sec|mm\/hr|ratio|units?\/l)$/i;
+const QUALITATIVE_VALUE = /^(?:positive|negative|not\s+detected|detected|non[- ]?reactive|reactive|present|absent|trace|normal|abnormal|indeterminate|equivocal)$/i;
 
-export function parseLabValues(lines: string[]): ExtractedLabValue[] {
+function normalizeRangeText(text: string): string {
+  const value = text.trim().replace(/(\d),(\d)/g, "$1$2");
+  return parseReferenceRange(value) ? value : "";
+}
+
+function parseResultValue(raw: string): { value: string; numericValue: number | null } | null {
+  const value = raw.trim().replace(/\s+/g, " ");
+  if (!value) return null;
+  // Keep inequalities as text: assigning the comparator's number as if it were
+  // the measured value could create a false normal/abnormal classification.
+  if (/^(?:<|>|≤|≥|<=|>=)\s*-?\d+(?:\.\d+)?$/.test(value)) {
+    return { value, numericValue: null };
+  }
+  if (/^\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?$/.test(value)) {
+    return { value: value.replace(/\s/g, ""), numericValue: Number(value.split("/")[0]) };
+  }
+  if (/^-?\d+(?:\.\d+)?$/.test(value)) return { value, numericValue: Number(value) };
+  if (QUALITATIVE_VALUE.test(value)) return { value, numericValue: null };
+  return null;
+}
+
+export function parseLabValues(lines: string[], page?: OcrPage): ExtractedLabValue[] {
   const values: ExtractedLabValue[] = [];
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed.length < 6) continue;
+    if (trimmed.length < 5) continue;
     if (/^(test|investigation|parameter|result|reference|unit|method)\b/i.test(trimmed)) continue;
 
-    // Split on 2+ spaces (the way lab reports are laid out) or on the first digit run.
     const cells = trimmed.split(/\s{2,}|\t+/).filter(Boolean);
     let testName = "";
-    let valueToken = "";
+    let rawResult = "";
     let unit: string | null = null;
     let referenceRange: string | null = null;
     let flag: string | null = null;
 
     if (cells.length >= 2) {
-      testName = cells[0];
-      const rest = cells.slice(1).map((cell) => cell.trim().replace(/(\d),(\d)/g, "$1$2"));
-      valueToken = rest[0] ?? "";
-      for (const cell of rest.slice(1)) {
-        if (UNIT_PATTERN.test(cell)) unit = cell;
-        else if (/^-?\d+(\.\d+)?\s*(-|to|–)\s*-?\d+(\.\d+)?$/.test(cell)) referenceRange = cell;
+      testName = cells[0].trim().replace(/[:=]+$/, "");
+      const rest = cells.slice(1).map((cell) => cell.trim());
+      rawResult = rest.shift() ?? "";
+      for (const cell of rest) {
+        const range = normalizeRangeText(cell);
+        if (range) referenceRange = range;
+        else if (UNIT_PATTERN.test(cell)) unit = cell;
         else if (LAB_FLAGS.test(cell)) flag = cell.toUpperCase();
       }
     } else {
-      const single = trimmed.replace(/(\d),(\d)/g, "$1$2").match(
-        /^([A-Za-z][A-Za-z0-9 ,()\/.\-]{2,60}?)\s+(-?\d+(?:\.\d+)?)\s*([A-Za-z%µ\/^0-9]{0,12})?\s*([<>]?\s*-?\d+(?:\.\d+)?\s*(?:-|to|–)\s*-?\d+(?:\.\d+)?)?\s*(H|L|HIGH|LOW)?$/i,
-      );
-      if (!single) continue;
-      testName = single[1];
-      valueToken = single[2];
-      unit = single[3] && UNIT_PATTERN.test(single[3]) ? single[3] : null;
-      referenceRange = single[4]?.trim() ?? null;
-      flag = single[5]?.toUpperCase() ?? null;
+      const qualitative = trimmed.match(/^([A-Za-z][A-Za-z0-9 ,()\/.+\-]{2,60}?)\s*[:=]\s*(not\s+detected|detected|non[- ]?reactive|positive|negative|reactive|present|absent|trace|normal|abnormal|indeterminate|equivocal)$/i);
+      if (qualitative) {
+        testName = qualitative[1].trim();
+        rawResult = qualitative[2].trim();
+      } else {
+        const compact = trimmed.replace(/(\d),(\d)/g, "$1$2").match(
+          /^([A-Za-z][A-Za-z0-9 ,()\/.+\-]{2,60}?)\s+((?:<=|>=|[<>≤≥]\s*)?-?\d+(?:\.\d+)?|not\s+detected|non[- ]?reactive|positive|negative|detected|reactive|present|absent|trace|normal|abnormal|indeterminate|equivocal)(?:\s+([A-Za-zµμ%0-9/^³]+))?(?:\s+(.+?))?\s*$/i,
+        );
+        if (!compact) continue;
+        testName = compact[1].trim();
+        rawResult = compact[2].trim();
+        if (compact[3] && UNIT_PATTERN.test(compact[3])) unit = compact[3];
+        const trailing = compact[4]?.trim();
+        if (trailing) {
+          const range = normalizeRangeText(trailing);
+          if (range) referenceRange = range;
+          else if (LAB_FLAGS.test(trailing)) flag = trailing.toUpperCase();
+        }
+      }
     }
 
-    if (!valueToken) continue;
-    const numericMatch = valueToken.match(/-?\d+(?:\.\d+)?/);
-    if (!numericMatch) continue;
-    const numericValue = Number(numericMatch[0]);
-    if (!Number.isFinite(numericValue)) continue;
+    // If the result cell contains a value followed by its unit, split only when
+    // the entire trailing token is a recognized unit; never guess conversions.
+    const unitInValue = rawResult.match(/^(.*?)(?:\s+)([A-Za-zµμ%0-9/^³]+)$/);
+    if (!unit && unitInValue && UNIT_PATTERN.test(unitInValue[2])) {
+      rawResult = unitInValue[1].trim();
+      unit = unitInValue[2];
+    }
+    const parsed = parseResultValue(rawResult);
+    if (!parsed) continue;
 
     const cleanName = testName.replace(/[.,;:]+$/, "").trim();
-    if (cleanName.length < 3) continue;
-    if (/^(date|name|age|sex|patient|doctor|lab no|sample|ref by|printed)/i.test(cleanName)) continue;
-
+    if (cleanName.length < 3 || /^(date|name|age|sex|patient|doctor|lab no|sample|ref by|printed)/i.test(cleanName)) continue;
     const metricKey = metricKeyForTestName(cleanName);
-    let status = evaluateAgainstRange(numericValue, referenceRange);
-    if (status === "UNKNOWN" && flag) {
-      if (flag.startsWith("H")) status = "ABOVE_RANGE";
-      else if (flag.startsWith("L")) status = "BELOW_RANGE";
-    }
+    const rawConfidence = 0.55 + (unit ? 0.12 : 0) + (referenceRange ? 0.16 : 0) + (metricKey ? 0.12 : 0) + (flag ? 0.05 : 0);
+    const confidence = Math.min(0.99, rawConfidence * (page?.confidence ?? 0.9));
+    const classification = classifyLabResult({
+      value: parsed.numericValue,
+      unit,
+      referenceRange,
+      sourceFlag: flag,
+      confidence,
+    });
+    const warnings: string[] = [];
+    if (confidence < 0.75) warnings.push("Extraction confidence is low; compare this value with the source document.");
+    if (classification.status === "UNKNOWN" && parsed.numericValue !== null) warnings.push(classification.reason);
 
-    if (values.some((v) => v.testName.toLowerCase() === cleanName.toLowerCase())) continue;
-
-    const confidence = 0.6 + (unit ? 0.2 : 0) + (referenceRange ? 0.15 : 0) + (metricKey ? 0.05 : 0);
-
+    if (values.some((value) => value.testName.toLowerCase() === cleanName.toLowerCase())) continue;
     values.push({
       testName: cleanName,
       metricKey,
-      value: numericMatch[0],
-      numericValue,
+      value: parsed.value,
+      numericValue: parsed.numericValue,
       unit,
       referenceRange,
-      status,
-      confidence: Math.min(0.98, Number(confidence.toFixed(2))),
+      status: classification.status,
+      classificationReason: classification.reason,
+      classificationRuleVersion: CLASSIFICATION_RULE_VERSION,
+      criticalFlag: classification.criticalFlag,
+      confidence: Number(confidence.toFixed(2)),
+      sourceText: trimmed,
+      sourcePage: page?.pageNumber ?? null,
+      warnings,
     });
   }
-
   return values;
 }
 
@@ -289,13 +337,16 @@ export function inferDocumentType(text: string, hint?: RecordType): RecordType {
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 export function parseDocument(ocr: OcrTextResult, hint?: RecordType): ExtractedDocument {
-  const lines = ocr.text.split(/\r?\n/).map((line) => line.replace(/\s+$/, ""));
+  const pages = ocr.pages?.length ? ocr.pages : [{ pageNumber: 1, text: ocr.text, confidence: ocr.confidence, source: "TESSERACT" as const }];
+  const lines = pages.flatMap((page) => page.text.split(/\r?\n/).map((line) => line.replace(/\s+$/, "")));
   const documentType = inferDocumentType(ocr.text, hint);
 
   const medicines = documentType === "PRESCRIPTION" || /\b(tab\.|syp\.|caps\.|rx)\b/i.test(ocr.text)
     ? parseMedicines(lines)
     : [];
-  const labValues = parseLabValues(lines);
+  const labValues = pages.flatMap((page) =>
+    parseLabValues(page.text.split(/\r?\n/).map((line) => line.replace(/\s+$/, "")), page),
+  );
   const diagnosisTerms = parseDiagnosisTerms(lines);
   const doctorName = parseDoctorName(ocr.text);
   const facilityName = parseFacilityName(lines);

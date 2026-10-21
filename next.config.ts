@@ -11,7 +11,14 @@ const nextConfig: NextConfig = {
   // Uploaded files are stored OUTSIDE the public folder and streamed through an
   // ownership-checked route handler (/api/records/[id]/file), so medical
   // documents are never publicly addressable.
-  serverExternalPackages: ["@prisma/client"],
+  serverExternalPackages: [
+    "@prisma/client",
+    "tesseract.js",
+    "pdfjs-dist",
+    "@napi-rs/canvas",
+    "@tesseract.js-data/eng",
+    "@tesseract.js-data/hin",
+  ],
 };
 
 export default nextConfig;

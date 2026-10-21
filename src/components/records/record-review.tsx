@@ -24,6 +24,7 @@ import { ResultStatusPill } from "@/components/health/status-pill";
 import { saveRecordCorrectionAction, updateRecordMetaAction } from "@/lib/actions/records";
 import { formatLongDate } from "@/lib/i18n/format";
 import { recordTypeMeta } from "@/components/health/record-type-meta";
+import type { TranslationKey } from "@/lib/i18n";
 import { RECORD_TYPES } from "@/types/domain";
 
 /**
@@ -41,6 +42,13 @@ type LabRow = {
   unit: string | null;
   referenceRange: string | null;
   status: string;
+  sourceText: string | null;
+  sourcePage: number | null;
+  confidence: number | null;
+  reviewStatus: string;
+  classificationReason: string | null;
+  criticalFlag: boolean;
+  warnings: string[];
 };
 
 type MedicineRow = {
@@ -50,6 +58,23 @@ type MedicineRow = {
   frequency: string | null;
   duration: string | null;
 };
+
+function classificationReasonKey(lab: LabRow): TranslationKey {
+  if (lab.status === "CRITICAL") return "result.reason.CRITICAL";
+  if (lab.criticalFlag && lab.status === "UNKNOWN") return "result.reason.CRITICAL_UNCERTAIN";
+  if (lab.status === "WITHIN_RANGE") return "result.reason.WITHIN_RANGE";
+  if (lab.status === "BELOW_RANGE") {
+    return lab.classificationReason?.startsWith("The source report flags")
+      ? "result.reason.SOURCE_LOW"
+      : "result.reason.BELOW_RANGE";
+  }
+  if (lab.status === "ABOVE_RANGE") {
+    return lab.classificationReason?.startsWith("The source report flags")
+      ? "result.reason.SOURCE_HIGH"
+      : "result.reason.ABOVE_RANGE";
+  }
+  return "result.reason.UNKNOWN";
+}
 
 type EditTarget =
   | { kind: "record"; field: "title" | "doctorName" | "facilityName" | "recordDate"; label: string; value: string }
@@ -92,6 +117,15 @@ export function RecordReview({
   const meta = recordTypeMeta(record.type);
   const confidencePercent = confidence ? Math.round(confidence * 100) : null;
   const lowConfidence = confidencePercent !== null && confidencePercent < 75;
+  const assessableLabs = labs.filter((lab) =>
+    lab.reviewStatus === "CONFIRMED" || ((lab.confidence ?? 0) >= 0.75 && lab.status !== "UNKNOWN"),
+  );
+  const findingCounts = {
+    inRange: assessableLabs.filter((lab) => lab.status === "WITHIN_RANGE").length,
+    abnormal: assessableLabs.filter((lab) => lab.status === "BELOW_RANGE" || lab.status === "ABOVE_RANGE").length,
+    critical: assessableLabs.filter((lab) => lab.status === "CRITICAL").length,
+    needsReview: labs.length - assessableLabs.length,
+  };
 
   const saveEdit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -305,6 +339,13 @@ export function RecordReview({
             <Badge variant="neutral">{t("timeline.valuesExtracted", { count: labs.length })}</Badge>
           </CardHeader>
           <CardContent className="space-y-3">
+            <ul className="flex flex-wrap gap-2" aria-label={t("review.findingSummary")}>
+              <li><Badge variant="good">{t("review.inRangeCount", { count: findingCounts.inRange })}</Badge></li>
+              <li><Badge variant="watch">{t("review.abnormalCount", { count: findingCounts.abnormal })}</Badge></li>
+              {findingCounts.critical > 0 && <li><Badge variant="alert">{t("review.criticalCount", { count: findingCounts.critical })}</Badge></li>}
+              {findingCounts.needsReview > 0 && <li><Badge variant="neutral">{t("review.needsReviewCount", { count: findingCounts.needsReview })}</Badge></li>}
+            </ul>
+            <p className="text-xs text-muted">{t("result.statusDisclaimer")}</p>
             <div className="overflow-x-auto scrollbar-thin">
               <table className="w-full min-w-[38rem] border-collapse text-left">
                 <thead>
@@ -322,12 +363,35 @@ export function RecordReview({
                 <tbody>
                   {labs.map((lab) => (
                     <tr key={lab.id} className="border-b border-ink-100 last:border-0">
-                      <td className="py-2.5 pr-3 font-medium text-ink-900">{lab.testName}</td>
+                      <td className="py-2.5 pr-3 font-medium text-ink-900">
+                        <p>{lab.testName}</p>
+                        <p className="mt-1 text-xs font-normal text-muted">
+                          {lab.sourcePage ? t("review.sourcePage", { page: lab.sourcePage }) : t("result.UNKNOWN")}
+                          {lab.confidence !== null && ` · ${t("review.ocrConfidence", { confidence: Math.round(lab.confidence * 100) })}`}
+                        </p>
+                        {lab.sourceText && (
+                          <details className="mt-1 text-xs font-normal text-muted">
+                            <summary className="cursor-pointer underline underline-offset-2">{t("review.sourceText")}</summary>
+                            <q className="mt-1 block break-words">{lab.sourceText}</q>
+                          </details>
+                        )}
+                      </td>
                       <td className="py-2.5 pr-3 font-semibold text-ink-900">{lab.value}</td>
                       <td className="py-2.5 pr-3 text-ink-700">{lab.unit ?? "—"}</td>
                       <td className="py-2.5 pr-3 text-ink-700">{lab.referenceRange ?? "—"}</td>
                       <td className="py-2.5 pr-3">
-                        <ResultStatusPill status={lab.status} />
+                        <div className="flex min-w-36 flex-col items-start gap-1.5">
+                          <ResultStatusPill status={lab.status} />
+                          <Badge variant={lab.reviewStatus === "CONFIRMED" ? "good" : "neutral"}>
+                            {lab.reviewStatus === "CONFIRMED" ? t("review.markedVerified") : t("review.needsReview")}
+                          </Badge>
+                          {lab.classificationReason && (
+                            <p className="max-w-64 text-xs text-muted">
+                              <span className="font-medium">{t("review.classificationReason")}:</span> {t(classificationReasonKey(lab))}
+                            </p>
+                          )}
+                          {lab.warnings.map((warning, index) => <p key={index} className="max-w-64 text-xs text-watch-700">{warning}</p>)}
+                        </div>
                       </td>
                       <td className="py-2.5">
                         <div className="flex gap-1">

@@ -177,7 +177,8 @@ model HealthRecord {
   ocrProvider   String?
   ocrConfidence Float?
   extraction    String? // JSON snapshot of the structured extraction (audit of what OCR produced)
-  corrections   String? // JSON [{ field, from, to, at }] — user-verified OCR fixes
+  extractionWarnings String? // JSON string[] of document-level OCR warnings
+  corrections    String? // JSON [{ field, from, to, at }] — user-verified OCR fixes
   aiSummary     String? // JSON HealthSummary sections
   aiSummaryAt   DateTime?
   aiProvider    String?
@@ -207,13 +208,22 @@ model LabResult {
   numericValue   Float?
   unit           String?
   referenceRange String?
-  status         String @default("UNKNOWN") // WITHIN_RANGE | BELOW_RANGE | ABOVE_RANGE | UNKNOWN
+  status         String @default("UNKNOWN") // WITHIN_RANGE | BELOW_RANGE | ABOVE_RANGE | CRITICAL | UNKNOWN
   date           DateTime
   isVerified     Boolean @default(false)
+  sourceText     String? // Exact OCR/PDF line used for this row; retained for review provenance.
+  sourcePage     Int?
+  confidence     Float?
+  reviewStatus   String   @default("NEEDS_REVIEW") // NEEDS_REVIEW | EXTRACTED | CONFIRMED
+  classificationReason String?
+  classificationRuleVersion String?
+  criticalFlag   Boolean  @default(false) // true only for explicit source-report critical/panic flags
+  warnings       String?  // JSON string[] of parsing/data-quality warnings
 
   createdAt DateTime @default(now())
 
   @@index([profileId, testName])
+  @@index([healthRecordId])
   @@map("lab_results")
 }
 

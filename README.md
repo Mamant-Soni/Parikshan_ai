@@ -7,12 +7,14 @@ document says in everyday English or Hindi, tracks how your values are trending,
 in order, checks your medicine list for interactions, and lets you ask questions about **your own
 records** — with no doctor's-visit jargon and no medical advice.
 
-This is a **working prototype**, not a static design: every screen reads and writes a real SQLite
-database through typed Prisma queries and server actions. The OCR and AI layers are **deterministic
-built-in demo providers**, so the whole product runs offline with zero API keys, and both are designed
-to be swapped for production services without touching the UI (see
-[Replacing mock OCR](#how-to-replace-mock-ocr-with-production-ocr) and
-[Replacing mock AI](#how-to-replace-mock-ai-with-production-ai)).
+This is a **working prototype**, not a static design: screens read and write a SQLite database through
+Prisma queries and server actions. Uploaded JPG, PNG, and PDF documents use local Tesseract OCR by
+default; PDFs with a usable text layer are read directly, while scanned pages are rasterized and OCRed
+on the application server. OCR is not silently replaced by synthetic text. An explicitly selected mock
+mode exists only for synthetic demos. The AI provider defaults to a deterministic, record-grounded demo
+provider; configure and assess a hosted model separately before deployment. See
+[Local OCR and review](#local-ocr-provenance-and-review) and
+[AI provider notes](#how-to-replace-mock-ai-with-production-ai).
 
 ---
 
@@ -34,7 +36,7 @@ to be swapped for production services without touching the UI (see
 - [Configuration](#configuration)
 - [npm scripts](#npm-scripts)
 - [Known limitations — what is deliberately not real](#known-limitations--what-is-deliberately-not-real)
-- [How to replace mock OCR with production OCR](#how-to-replace-mock-ocr-with-production-ocr)
+- [Local OCR, provenance and review](#local-ocr-provenance-and-review)
 - [How to replace mock AI with production AI](#how-to-replace-mock-ai-with-production-ai)
 - [How to integrate official ABHA / ABDM services](#how-to-integrate-official-abha--abdm-services)
 - [How to deploy this application](#how-to-deploy-this-application)
@@ -115,9 +117,9 @@ Deliberately ordered so each step builds on the previous one. ~15 seconds per st
 2. **Try Interactive Demo** → lands on the dashboard with real seeded data (compare against the empty
    `EmptyState` you would see on a fresh account).
 3. **Dashboard** — “what needs attention today”: dose due, out-of-range flag, one plain-language insight.
-4. **Upload** — drop any JPG/PNG/PDF (the demo OCR returns a realistic lab report chosen from the file name
-   and the selected document type); show the *Reading your document…* loading state, then the OCR review screen
-   with confidence and “please check these fields”.
+4. **Upload** — drop a JPG/PNG/PDF and let local Tesseract read the file (the optional synthetic mock
+   samples appear only when `OCR_PROVIDER=mock` is explicitly enabled); inspect the indeterminate processing
+   indicator, then the OCR review screen with source text, page, confidence and review warnings.
 5. **Review & correct** — edit a mis-read value, save. Corrections are logged in the record's audit trail.
 6. **Record detail** — plain-language summary: *what it says*, *within range*, *outside range*, *terms
    explained*, *what to discuss with your doctor*.
@@ -203,7 +205,7 @@ src/
   lib/
     actions/               # server actions: records, medications, profiles, assistant, interactions, preferences, auth
     ai/                    # HealthAIProvider + Mock/OpenAI-compatible/Gemini + fallback wrappers
-    ocr/                   # OcrProvider + mock provider + regex parser + types
+    ocr/                   # local Tesseract/PDF pipeline, opt-in mock, validation, parser and provenance types
     interactions/          # DrugInteractionProvider (demo dataset / RxNorm alias) + normalisation + dedupe
     fhir/                  # R4 mappers (pure) + ABHA helpers (Verhoeff, masking, demo notice)
     health/                # metric definitions (20), reference-range evaluation, insight builder
@@ -435,8 +437,8 @@ so the file is optional for the demo.
 | `OPENAI_API_KEY` `OPENAI_BASE_URL` `OPENAI_MODEL` | empty | Required for `openai` (any OpenAI-compatible endpoint) |
 | `GEMINI_API_KEY` `GEMINI_MODEL` | empty | Required for `gemini` |
 | `AZURE_OPENAI_ENDPOINT` `AZURE_OPENAI_API_KEY` `AZURE_OPENAI_DEPLOYMENT` | empty | Azure deployments |
-| `OCR_PROVIDER` | `mock` | `mock` \| `tesseract` \| `google-vision` \| `azure-vision` \| `aws-textract` |
-| `GOOGLE_VISION_API_KEY` / `AZURE_VISION_ENDPOINT` + `AZURE_VISION_KEY` | empty | Hosted OCR credentials |
+| `OCR_PROVIDER` | `tesseract` | `tesseract` (local) \| `mock` (synthetic demo only; hosted providers are not implemented) |
+| `OCR_LANGUAGES` | `eng` | Local trained-data models, e.g. `eng+hin`; both model packages are bundled |
 | `INTERACTION_PROVIDER` | `demo` | `demo` (seeded dataset) \| `rxnav` (public NLM RxNorm API) |
 | `RXNAV_BASE_URL` | `https://rxnav.nlm.nih.gov/REST` | Point the RxNorm adapter at a mirror/proxy |
 | `ABDM_MODE` | `demo` | `demo` \| `sandbox` \| `production` — gates how ABHA linking may be described; this build makes no ABDM calls |
@@ -447,9 +449,9 @@ so the file is optional for the demo.
 | `VOICE_MAX_RECORDING_SECONDS` / `VOICE_MAX_AUDIO_MB` | `45` / `8` | Client recording cap and server upload cap |
 | `VOICE_MAX_SPEAK_CHARS` / `VOICE_MAX_QUESTION_CHARS` | `1500` / `400` | Spoken-answer and transcript limits |
 
-An unconfigured or failing provider **degrades to the demo provider instead of erroring**, and every
-surface shows *which* provider answered (e.g. “Demo AI (built-in, factors only your records)”) — the UI
-never implies a real model or a live ABDM connection when there isn't one.
+An unconfigured or failing hosted **AI** provider may fall back to the deterministic demo AI, and the
+response reports which provider answered. OCR behaves differently: a missing or unimplemented OCR
+provider fails closed and does not fabricate extraction. The UI does not imply a live ABDM connection.
 
 ---
 
@@ -471,11 +473,14 @@ never implies a real model or a live ABDM connection when there isn't one.
 
 Stated plainly so nobody demos this as something it is not:
 
-- **OCR is mocked.** `MockOcrProvider` returns realistic sample document text chosen from the file name
-  and the selected document type, then the regex parser (`src/lib/ocr/parser.ts`) extracts from it. No
-  pixels are read, and no vendor call is made. Confidence is a stable 0.82–0.91.
-- **AI is a deterministic reasoner**, not an LLM: it computes ranges, deltas and comparisons from your
-  stored rows and templates the language. Same input → same answer, which is what you want in a demo.
+- **OCR is functional but not clinically validated.** The default local Tesseract provider reads images
+  and scanned PDF pages; PDF.js extracts embedded text when available. It runs on the app server with
+  bundled English/Hindi language data, not in the browser and not at an external OCR vendor. OCR may
+  misread values, units, ranges, dates or columns; every extracted value remains reviewable and should
+  be checked against the original. `MockOcrProvider` is opt-in synthetic demo mode and does not inspect
+  file contents.
+- **AI defaults to a deterministic reasoner**, not an LLM: it uses the profile's stored rows and templates
+  language. Same input → same answer. Hosted providers are optional and need independent safety/evaluation.
 - **The interaction dataset is 9 seeded pairs** covering the demo medicines, matched through medicine-name
   normalisation. `INTERACTION_PROVIDER=rxnav` demonstrates a real public source (NLM RxNorm) with an
   explicit “not clinically verified” caveat.
@@ -500,100 +505,66 @@ Stated plainly so nobody demos this as something it is not:
 
 ---
 
-## How to replace mock OCR with production OCR
+## Local OCR, provenance and review
 
-The interface is already the vendor boundary — `src/lib/ocr/types.ts`:
+`src/lib/ocr/index.ts` selects local Tesseract by default. The `TesseractOcrProvider` in
+`src/lib/ocr/tesseract-provider.ts` uses PDF.js to read embedded PDF text; pages without enough text are
+rendered with `@napi-rs/canvas` and sent to local Tesseract workers. JPEG/PNG images use the same local
+engine. The English and Hindi trained-data packages are installed with the app; set `OCR_LANGUAGES=eng+hin`
+to use both. The implementation caps uploads at 10 MB, PDFs at 20 pages, and images at 20 megapixels.
+No OCR-vendor credentials or API calls are required.
 
-```ts
-export interface OcrProvider {
-  readonly name: string;
-  readonly isMock: boolean;
-  extractTextFromImage(input: OcrInput): Promise<OcrTextResult>;
-  extractTextFromPdf(input: OcrInput): Promise<OcrTextResult>;
-  extractStructuredFields?(input: OcrInput): Promise<Partial<ExtractedDocument> | null>;
-}
+Supported inputs are PDF, JPEG and PNG. The server checks actual file signatures, MIME consistency,
+image dimensions, PDF readability/encryption and page count before OCR or storage. Uploads are stored
+outside the web root under random, profile-scoped names; the file API verifies profile ownership.
+Deployment operators must still provide encrypted storage/volume backups, retention controls, malware
+scanning and a privacy review before handling real patient records. Local OCR means the document remains
+within your application deployment; it does not by itself make the deployment secure or compliant.
+
+Every extracted lab row stores the original result text, source page, OCR confidence, parser warnings,
+review status, classification explanation and rule version. The record review screen displays these
+alongside the value, unit and printed reference range. A user correction is retained in the correction
+audit trail and marks that row as confirmed. The app does not alter or normalize the original displayed
+value or unit.
+
+### Result labels
+
+- **Green / Within range** — numeric value parsed with sufficient confidence and inside a compatible
+  reference range printed on that report. This is not a guarantee of health.
+- **Orange / Below or above range · review** — outside the report's own range, or explicitly marked low/high
+  on the source when no parseable range is available. This is not by itself an emergency classification.
+- **Red / Critical flag on source report** — only a sufficiently confident, explicit `HH`, `LL`, `critical`
+  or `panic` flag read from the source. No numeric clinical threshold is invented by the app.
+- **Neutral / Not assessed** — missing/unparseable range, incompatible units, qualitative or uncertain values,
+  or low confidence. Informational values remain neutral.
+
+Status text and explanations accompany colors. These are deterministic document-reading labels, not a
+diagnosis or triage system; users should verify the source report and discuss results with a clinician.
+The rule version currently persisted is `report-range-v1`.
+
+### Configuration and demo mode
+
+```dotenv
+OCR_PROVIDER=tesseract
+OCR_LANGUAGES=eng
+NEXT_PUBLIC_OCR_PROVIDER=tesseract
 ```
 
-**1. Implement an adapter** in `src/lib/ocr/providers/google-vision.ts` (create the `providers/` folder):
+Set `OCR_LANGUAGES=eng+hin` for bilingual OCR. To demonstrate the upload/review flow without using
+actual uploaded text, set both `OCR_PROVIDER=mock` and `NEXT_PUBLIC_OCR_PROVIDER=mock`; the UI then
+exposes synthetic samples and explicitly warns that their text is generated and unrelated to the file.
+Never use mock mode for patient documents. Any unimplemented provider name is rejected rather than
+silently returning a mock result.
 
-```ts
-import type { OcrInput, OcrProvider, OcrTextResult } from "../types";
+The schema adds lab source/provenance and classification fields. For this SQLite prototype, apply the
+current Prisma schema with `npm run db:push` (back up any existing database first). The repository does
+not yet contain a generated production migration history; use reviewed, versioned SQL/Prisma migrations
+for a production release rather than relying on `db push`.
 
-export class GoogleVisionOcrProvider implements OcrProvider {
-  readonly name = "Google Cloud Vision";
-  readonly isMock = false;
-
-  async extractTextFromImage({ buffer }: OcrInput): Promise<OcrTextResult> {
-    const res = await fetch(
-      `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GOOGLE_VISION_API_KEY}`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          requests: [{
-            image: { content: buffer.toString("base64") },
-            // DOCUMENT_TEXT_DETECTION handles photos of prescriptions; TEXT_DETECTION for scans.
-            features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
-            imageContext: { languageHints: ["en", "hi"] },
-          }],
-        }),
-      },
-    );
-    if (!res.ok) throw new Error(`Vision API ${res.status}`);
-    const json = (await res.json()) as any;
-    const annotation = json?.responses?.[0]?.fullTextAnnotation;
-    const pages = json?.responses?.[0]?.textAnnotations?.length ? 1 : 0;
-    return {
-      text: annotation?.text ?? "",
-      // Vision exposes a per-page confidence — never invent one.
-      confidence: annotation?.pages?.[0]?.confidence ?? 0.5,
-      provider: this.name,
-      pageCount: pages,
-      warnings: annotation ? [] : ["No text detected — retake the photo in better light."],
-      failed: !annotation,
-    };
-  }
-
-  async extractTextFromPdf() {
-    // Option A: PDF_TEXT_DETECTION with a gRPC client.
-    // Option B: rasterise with pdf-to-png-converter, then reuse extractTextFromImage per page.
-    throw new Error("implement PDF path or rasterise first");
-  }
-}
-```
-
-**2. Register it** in `src/lib/ocr/index.ts` — replace the `case "google-vision"` stub:
-
-```ts
-case "google-vision":
-  cached = new GoogleVisionOcrProvider();
-  return cached;
-```
-
-**3. Set the environment:** `OCR_PROVIDER=google-vision` + `GOOGLE_VISION_API_KEY=…`. Nothing else
-changes: `readDocument()` still runs `parseDocument()` on the returned text, so the review screen,
-corrections, lab parsing, metric rows and FHIR export all start working on real text automatically.
-
-**4. Optional — skip the regexes.** Vendors with document understanding (Azure Document Intelligence
-*prebuilt/Read* or *custom* prescription model, AWS Textract Analyze ID, GPT-4o vision) can implement
-`extractStructuredFields()` and return `{ medicines, labValues, recordDate, doctorName, facilityName }`
-directly; `readDocument()` already prefers structured fields when present and merges them with the parser
-output. That is the single biggest accuracy win, because `ExtractedLabValue.referenceRange` then comes
-from the table cells rather than a regex.
-
-**Also worth doing for a real deployment**
-
-- **Accuracy:** evaluate against your own corpus — add a `/scripts/ocr-eval.ts` harness with 30–50
-  labelled Indian prescriptions/lab reports and track per-field precision/recall before switching the
-  default provider.
-- **Throughput:** make OCR asynchronous. `HealthRecord.status` already has `PROCESSING`/`READY`/
-  `NEEDS_REVIEW`/`FAILED`, so move the `readDocument()` call to a queue (SQS/BullMQ/Inngest), store
-  `rawText` + `extraction` when the job finishes, and let `/records/[id]` poll or stream the result.
-- **Multilingual:** Hindi prescriptions mix Devanagari and Latin; keep `languageHints: ["en","hi"]` and
-  extend `normalizeDrugName()` in `src/lib/interactions/normalize.ts` for transliterated names.
-- **Privacy:** vendor DPA + no-training clause, encrypt `data/uploads` at rest, strip EXIF/GPS before
-  storage, and send only the bytes the user uploaded (never the DB row).
-- **Cost control:** size/compression pre-processing, per-user daily budget, and a `provider` +
-  `confidence` column (already present) on every record for billing and audit.
+Tests include actual local OCR of a generated image and a generated image-only PDF, plus parser,
+provenance, confidence and classification rules: `node --import tsx --test tests/ocr/*.test.ts`.
+These synthetic fixtures validate the engine path, not accuracy on clinical documents; build a consented,
+representative and clinician-reviewed evaluation corpus before making accuracy claims.
 
 ---
 
@@ -818,7 +789,7 @@ docker run -p 3000:3000 \
 | Pages 500 with `no such table: User` | `npm run setup` (schema + seed). `predev` only seeds when the DB file is missing/empty. |
 | `better-sqlite3` node-gyp failure on install | Needs Python + a C++ toolchain and Node headers: `apt-get install -y python3 make g++` and, in containers without headers, `npm_config_nodedir=/usr/local npm install`. |
 | `UnhandledSchemeError: Reading from "node:crypto"` | A client component imported a server-only module (`demo-seed.ts`, `uploads/storage.ts`). Import the client-safe twins (`src/lib/demo/account.ts`, `src/lib/uploads/limits.ts`) instead. |
-| Prisma cannot download engine binaries (locked-down network) | Already handled: `engineType = "client"` + `engine: "js"` in `prisma.config.ts`. Keep `url = env("DATABASE_URL")` — the “url will NOT be used” warning from the CLI is expected with driver adapters. |
+| `prisma generate` or `db push` fails with a missing engine / `External error id#0` | Prisma CLI code generation and schema sync require a compatible engine/runtime. This sandbox could not reach `binaries.prisma.sh`, and database-backed tests could not create their temporary SQLite schema. Ensure the build environment can fetch Prisma's matching engine assets, or use the documented supported Prisma engine setup; never hand-edit generated client files. |
 | `PRISMA_SKIP_POSTINSTALL_GENERATE=1 npm install`, then 500s | Run `npx prisma generate` afterwards — skipping the postinstall skips codegen. |
 | Hindi text looks like Latin characters | Font fallback: the root layout loads a Devanagari-capable system stack; on minimal Linux images install `fonts-noto-core`. |
 | Uploaded file not visible after refresh | It must live under `UPLOAD_DIR` and be owned by the active profile's user — check the ownership branch in `/api/records/[id]/file`; demo records intentionally have no file (404 with a friendly note). |

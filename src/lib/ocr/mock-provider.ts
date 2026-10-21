@@ -10,8 +10,8 @@ import type { OcrInput, OcrProvider, OcrTextResult } from "./types";
  * HONESTY NOTE: this provider does not actually read the pixels of the uploaded
  * file. It composes a plausible document based on the file name / sample hint,
  * which is exactly why the review screen always asks the user to confirm the
- * extracted values before they are saved. Replace it via OCR_PROVIDER (see
- * ./index.ts and the README section "How to replace mock OCR with production OCR").
+ * extracted values before they are saved. Enable it only for synthetic demos
+ * with OCR_PROVIDER=mock; see the README section "Local OCR, provenance and review".
  */
 
 export type SampleKey =
@@ -294,7 +294,7 @@ export class MockOcrProvider implements OcrProvider {
   private build(input: OcrInput, pageCount = 1): OcrTextResult {
     const sample = pickSample({
       fileName: input.fileName,
-      sampleKey: input.hint,
+      sampleKey: input.sampleKey,
       documentType: input.documentType,
     });
     const text = buildMockDocumentText(sample, {
@@ -316,6 +316,7 @@ export class MockOcrProvider implements OcrProvider {
       confidence: 0.82 + (hash(input.fileName) % 10) / 100,
       provider: this.name,
       pageCount,
+      pages: [{ pageNumber: 1, text, confidence: 0.86, source: "DEMO" }],
       warnings,
     };
   }
@@ -325,6 +326,6 @@ export class MockOcrProvider implements OcrProvider {
   }
 
   async extractTextFromPdf(input: OcrInput): Promise<OcrTextResult> {
-    return this.build(input, 2);
+    return this.build(input, 1);
   }
 }

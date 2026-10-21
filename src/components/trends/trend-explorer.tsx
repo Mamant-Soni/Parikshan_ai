@@ -83,7 +83,7 @@ export function TrendExplorer({ series }: { series: MetricSeries[] }) {
   const delta = latest && previous ? latest.value - previous.value : undefined;
   const direction: "up" | "down" | "flat" | "unknown" =
     delta === undefined ? "unknown" : Math.abs(delta) < 0.05 ? "flat" : delta > 0 ? "up" : "down";
-  const status = latest ? evaluateAgainstRange(latest.value, active?.referenceRange ?? null) : "UNKNOWN";
+  const status = latest ? evaluateAgainstRange(latest.value, active?.referenceRange ?? null, active?.unit) : "UNKNOWN";
 
   const chartData = React.useMemo(() => {
     if (active?.metricKey === "bp_systolic" && bloodPressure.length) {

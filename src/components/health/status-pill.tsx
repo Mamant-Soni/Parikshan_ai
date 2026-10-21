@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowRight, ArrowUp, CheckCircle2, MinusCircle } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CheckCircle2, MinusCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useI18n } from "@/components/providers/i18n-provider";
 import type { TranslationKey } from "@/lib/i18n";
@@ -9,15 +9,16 @@ import type { ResultStatus } from "@/types/domain";
 /**
  * Result status.
  *
- * Wording rule (see the spec): we say "Outside the reference range" or
- * "Below reference range" — never "dangerous", "critical" or "abnormal".
+ * Red is reserved for an explicit critical flag from the reporting laboratory.
+ * Ordinary range deviations remain orange; missing/uncertain data stays neutral.
  */
 export function ResultStatusPill({ status, size = "default" }: { status: ResultStatus | string; size?: "default" | "lg" }) {
   const { t } = useI18n();
   const map: Record<string, { variant: "good" | "watch" | "alert" | "neutral"; key: TranslationKey; icon: React.ReactNode }> = {
     WITHIN_RANGE: { variant: "good", key: "result.WITHIN_RANGE", icon: <CheckCircle2 className="size-3.5" aria-hidden="true" /> },
     BELOW_RANGE: { variant: "watch", key: "result.BELOW_RANGE", icon: <ArrowDown className="size-3.5" aria-hidden="true" /> },
-    ABOVE_RANGE: { variant: "alert", key: "result.ABOVE_RANGE", icon: <ArrowUp className="size-3.5" aria-hidden="true" /> },
+    ABOVE_RANGE: { variant: "watch", key: "result.ABOVE_RANGE", icon: <ArrowUp className="size-3.5" aria-hidden="true" /> },
+    CRITICAL: { variant: "alert", key: "result.CRITICAL", icon: <AlertTriangle className="size-3.5" aria-hidden="true" /> },
     UNKNOWN: { variant: "neutral", key: "result.UNKNOWN", icon: <MinusCircle className="size-3.5" aria-hidden="true" /> },
   };
   const entry = map[status] ?? map.UNKNOWN;
