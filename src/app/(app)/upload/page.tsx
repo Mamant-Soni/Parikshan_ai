@@ -14,12 +14,13 @@ import type { Language } from "@/types/domain";
 
 export const metadata: Metadata = { title: "Upload record" };
 
-/** Upload screen: photo/PDF in, structured record out (mock OCR in this build). */
+/** Upload screen for local OCR and human-reviewed document extraction. */
 export default async function UploadPage() {
   const user = await requireUser();
   const profile = await getActiveProfile(user.id);
   const lang: Language = user.preferences?.language === "hi" ? "hi" : "en";
   const t = createTranslator(lang);
+  const isMockOcr = (process.env.OCR_PROVIDER ?? "tesseract").toLowerCase() === "mock";
 
   const tips = [
     { titleKey: "upload.tip1Title", bodyKey: "upload.tip1Body" },
@@ -33,7 +34,7 @@ export default async function UploadPage() {
         title={t("upload.title")}
         description={t("upload.subtitle", { name: profile.name })}
         emoji="📄"
-        action={<Badge variant="brand">{t("upload.demoBadge")}</Badge>}
+        action={<Badge variant={isMockOcr ? "watch" : "good"}>{isMockOcr ? t("upload.demoBadge") : t("upload.localOcrBadge")}</Badge>}
       />
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
@@ -64,7 +65,7 @@ export default async function UploadPage() {
             <Info className="mt-0.5 size-5 shrink-0 text-brand-600" aria-hidden="true" />
             <div className="space-y-1">
               <p className="font-semibold">{t("upload.ocrNoticeTitle")}</p>
-              <p className="text-sm text-muted">{t("upload.mockNotice")}</p>
+              <p className="text-sm text-muted">{t(isMockOcr ? "upload.mockModeNotice" : "upload.mockNotice")}</p>
             </div>
           </Alert>
 

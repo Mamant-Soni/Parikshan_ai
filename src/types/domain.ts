@@ -22,7 +22,7 @@ export const RECORD_STATUSES = ["PROCESSING", "READY", "NEEDS_REVIEW", "FAILED"]
 export type RecordStatus = (typeof RECORD_STATUSES)[number];
 
 // ── Lab values ─────────────────────────────────────────────────────────────
-export const RESULT_STATUSES = ["WITHIN_RANGE", "BELOW_RANGE", "ABOVE_RANGE", "UNKNOWN"] as const;
+export const RESULT_STATUSES = ["WITHIN_RANGE", "BELOW_RANGE", "ABOVE_RANGE", "CRITICAL", "UNKNOWN"] as const;
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
 // ── Medications ────────────────────────────────────────────────────────────

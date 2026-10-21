@@ -63,6 +63,7 @@ const FHIR_STATUS_BY_RESULT: Record<ResultStatus, string> = {
   WITHIN_RANGE: "final",
   BELOW_RANGE: "final",
   ABOVE_RANGE: "final",
+  CRITICAL: "final",
   UNKNOWN: "preliminary",
 };
 
@@ -167,6 +168,8 @@ function interpretationCode(status: ResultStatus): string {
       return "L";
     case "ABOVE_RANGE":
       return "H";
+    case "CRITICAL":
+      return "HH";
     case "WITHIN_RANGE":
       return "N";
     default:

@@ -103,7 +103,7 @@ export default async function RecordDetailPage({
         recordId={record.id}
         initialSummary={storedSummary}
         initialProvider={record.aiProvider}
-        initialIsMock={Boolean(record.ocrProvider?.toLowerCase().includes("mock") || record.aiProvider?.toLowerCase().includes("mock"))}
+        initialIsMock={Boolean(record.aiProvider?.toLowerCase().includes("demo") || record.aiProvider?.toLowerCase().includes("mock"))}
       />
 
       <RecordReview
@@ -126,6 +126,13 @@ export default async function RecordDetailPage({
           unit: lab.unit,
           referenceRange: lab.referenceRange,
           status: lab.status,
+          sourceText: lab.sourceText,
+          sourcePage: lab.sourcePage,
+          confidence: lab.confidence,
+          reviewStatus: lab.reviewStatus,
+          classificationReason: lab.classificationReason,
+          criticalFlag: lab.criticalFlag,
+          warnings: safeJsonArray(lab.warnings),
         }))}
         medicines={record.medications.map((medicine) => ({
           id: medicine.id,
@@ -135,7 +142,7 @@ export default async function RecordDetailPage({
           duration: medicine.duration,
         }))}
         confidence={record.ocrConfidence}
-        warnings={[]}
+        warnings={safeJsonArray(record.extractionWarnings)}
         correctionCount={parseCorrectionCount(record.corrections)}
       />
     </div>

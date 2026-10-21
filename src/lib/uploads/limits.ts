@@ -6,22 +6,23 @@
  * instead of in `storage.ts`, which touches the filesystem and `node:crypto`.
  */
 
-export const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_MB ?? 10) * 1024 * 1024;
+const configuredMaxMb = Number(process.env.MAX_UPLOAD_MB ?? 10);
+const effectiveMaxMb = Number.isFinite(configuredMaxMb) && configuredMaxMb > 0
+  ? Math.min(configuredMaxMb, 25)
+  : 10;
+export const MAX_UPLOAD_BYTES = effectiveMaxMb * 1024 * 1024;
 
-export const ALLOWED_MIME_TYPES = [
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "image/heif",
-  "application/pdf",
-];
+export const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "application/pdf"] as const;
 
+/** Client hint only. The server independently verifies the file signature. */
 export function isAllowedType(mimeType: string, fileName: string): boolean {
-  if (ALLOWED_MIME_TYPES.includes(mimeType.toLowerCase())) return true;
-  // Some browsers send an empty type for camera captures / HEIC files.
-  return /\.(jpe?g|png|webp|heic|heif|pdf)$/i.test(fileName) && (!mimeType || mimeType === "application/octet-stream");
+  const type = mimeType.toLowerCase();
+  const extension = fileName.split(".").pop()?.toLowerCase();
+  const expected = extension === "pdf" ? "application/pdf"
+    : extension === "jpg" || extension === "jpeg" ? "image/jpeg"
+      : extension === "png" ? "image/png" : null;
+  if (!expected) return false;
+  return !type || type === "application/octet-stream" || type === expected || (expected === "image/jpeg" && type === "image/jpg");
 }
 
 export function formatBytes(bytes: number, locale = "en-IN"): string {

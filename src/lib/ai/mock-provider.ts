@@ -76,6 +76,7 @@ const STATUS_TEXT: Record<string, { en: string; hi: string }> = {
   WITHIN_RANGE: { en: "within the reference range on your report", hi: "आपकी रिपोर्ट की संदर्भ सीमा के भीतर" },
   BELOW_RANGE: { en: "below the reference range on your report", hi: "आपकी रिपोर्ट की संदर्भ सीमा से कम" },
   ABOVE_RANGE: { en: "above the reference range on your report", hi: "आपकी रिपोर्ट की संदर्भ सीमा से ज़्यादा" },
+  CRITICAL: { en: "explicitly marked critical by the reporting laboratory", hi: "रिपोर्टिंग लैब द्वारा गंभीर के रूप में चिह्नित" },
   UNKNOWN: { en: "recorded without a reference range", hi: "बिना संदर्भ सीमा के दर्ज" },
 };
 

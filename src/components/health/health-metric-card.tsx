@@ -74,7 +74,8 @@ export function HealthMetricCard({ metric, href }: { metric: HealthMetricCardDat
   const stateStyles: Record<string, { border: string; value: string }> = {
     WITHIN_RANGE: { border: "border-l-good-600", value: "text-good-700" },
     BELOW_RANGE: { border: "border-l-watch-600", value: "text-watch-700" },
-    ABOVE_RANGE: { border: "border-l-alert-600", value: "text-alert-700" },
+    ABOVE_RANGE: { border: "border-l-watch-600", value: "text-watch-700" },
+    CRITICAL: { border: "border-l-alert-600", value: "text-alert-700" },
   };
   const stateStyle = stateStyles[metric.status ?? ""];
 

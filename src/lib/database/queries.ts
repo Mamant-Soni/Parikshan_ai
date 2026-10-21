@@ -1,5 +1,5 @@
 import { prisma } from "./client";
-import { evaluateAgainstRange, getMetric, metricKeyForTestName, METRICS } from "@/lib/health/metrics";
+import { evaluateAgainstRange, getMetric, metricKeyForTestName, METRICS, parseReferenceRange, unitsCompatible } from "@/lib/health/metrics";
 import { buildInsights, type Insight, type MetricLike } from "@/lib/health/insights";
 import { toDayKey } from "@/lib/i18n/format";
 import type { AIContext, AIContextMetric, AIContextRecord } from "@/lib/ai/types";
@@ -44,7 +44,7 @@ export async function getMetricSummaries(profileId: string) {
     prisma.labResult.findMany({
       where: { profileId },
       orderBy: { date: "desc" },
-      select: { healthRecordId: true, testName: true, referenceRange: true, status: true, date: true },
+      select: { healthRecordId: true, testName: true, referenceRange: true, status: true, criticalFlag: true, confidence: true, date: true },
     }),
   ]);
 
@@ -73,11 +73,18 @@ export async function getMetricSummaries(profileId: string) {
       const latestReport = group.latest.sourceRecordId
         ? rangeByRecordAndMetric.get(`${group.latest.sourceRecordId}:${metricKey}`)
         : undefined;
-      const derivedStatus = evaluateAgainstRange(group.latest.value, latestReport?.referenceRange);
+      const parsedRange = parseReferenceRange(latestReport?.referenceRange);
+      const unitsMatch = !parsedRange?.unit || unitsCompatible(group.latest.unit, parsedRange.unit);
+      const derivedStatus = latestReport?.criticalFlag && (latestReport.confidence ?? 0) >= 0.65
+        ? "CRITICAL"
+        : unitsMatch
+          ? evaluateAgainstRange(group.latest.value, latestReport?.referenceRange, group.latest.unit)
+          : "UNKNOWN";
+      const storedStatus = latestReport?.status;
       const status = derivedStatus !== "UNKNOWN"
         ? derivedStatus
-        : latestReport?.status === "WITHIN_RANGE" || latestReport?.status === "BELOW_RANGE" || latestReport?.status === "ABOVE_RANGE"
-          ? latestReport.status
+        : unitsMatch && (storedStatus === "WITHIN_RANGE" || storedStatus === "BELOW_RANGE" || storedStatus === "ABOVE_RANGE")
+          ? storedStatus
           : "UNKNOWN";
       const delta = group.previous ? group.latest.value - group.previous.value : undefined;
       return {

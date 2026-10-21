@@ -5,14 +5,14 @@ import { z } from "zod";
 import { prisma } from "@/lib/database/client";
 import { assertProfileOwnership, assertRecordOwnership, writeAuditLog } from "@/lib/auth/guards";
 import { getCurrentUser } from "@/lib/auth/session";
-import { readDocument } from "@/lib/ocr";
+import { DocumentInputError, readDocument, validateDocumentBytes } from "@/lib/ocr";
 import { saveUploadedFile, removeUploadedFile } from "@/lib/uploads/storage";
 import { isAllowedType, MAX_UPLOAD_BYTES } from "@/lib/uploads/limits";
 import { recordCorrectionSchema, recordMetaSchema } from "@/lib/validation";
 import { toDate } from "@/lib/i18n/format";
 import { generateSummarySafely } from "@/lib/ai";
 import { getAIContext, getRecordDetail } from "@/lib/database/queries";
-import { getMetric, evaluateAgainstRange } from "@/lib/health/metrics";
+import { getMetric, classifyLabResult } from "@/lib/health/metrics";
 import type { ExtractedDocument } from "@/lib/ocr/types";
 
 /**
@@ -57,15 +57,30 @@ export async function uploadRecordAction(_prevState: UploadState, formData: Form
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
+  let detectedFile: Awaited<ReturnType<typeof validateDocumentBytes>>;
+  try {
+    detectedFile = await validateDocumentBytes(buffer, file.type);
+  } catch (error) {
+    return { ok: false, error: error instanceof DocumentInputError ? error.code : "INVALID_DOCUMENT" };
+  }
+
+  const mockOcrEnabled = (process.env.OCR_PROVIDER ?? "tesseract").trim().toLowerCase() === "mock";
+  if (sampleKey && !mockOcrEnabled) {
+    return { ok: false, error: "DEMO_OCR_DISABLED" };
+  }
+  if (sampleKey && !/^(prescription|blood-report|lipid-profile|diabetes-panel)$/.test(sampleKey)) {
+    return { ok: false, error: "INVALID_INPUT" };
+  }
 
   let stored;
   try {
-    stored = await saveUploadedFile(buffer, file.name, file.type || "image/jpeg", profileId);
+    stored = await saveUploadedFile(buffer, file.name, detectedFile.mimeType, profileId);
   } catch (error) {
     console.error("[upload] failed to store file", error);
     return { ok: false, error: "STORAGE_FAILED" };
   }
 
+  let processingRecordId: string | null = null;
   try {
     const hint = /^(PRESCRIPTION|LAB_REPORT|DOCTOR_VISIT|DISCHARGE_SUMMARY|VACCINATION|IMAGING|OTHER)$/.test(hintType)
       ? (hintType as ExtractedDocument["documentType"])
@@ -75,9 +90,10 @@ export async function uploadRecordAction(_prevState: UploadState, formData: Form
       {
         buffer,
         fileName: sampleKey ? `${sampleKey}.pdf` : file.name,
-        mimeType: file.type || "image/jpeg",
-        // The sample hint drives the demo OCR template; real providers ignore it.
-        hint: (sampleKey as never) ?? hint,
+        mimeType: detectedFile.mimeType,
+        // Sample templates are accepted only when the explicitly selected demo provider is active.
+        sampleKey: sampleKey || undefined,
+        hint,
         documentType: hint,
       },
       hint,
@@ -106,14 +122,16 @@ export async function uploadRecordAction(_prevState: UploadState, formData: Form
         status: extracted.lowConfidenceFields.length ? "NEEDS_REVIEW" : "READY",
         fileName: file.name,
         filePath: stored.relativePath,
-        mimeType: file.type || "application/octet-stream",
+        mimeType: detectedFile.mimeType,
         fileSize: stored.size,
         rawText: extracted.rawText,
         ocrProvider: ocr.provider,
         ocrConfidence: extracted.confidence,
         extraction: JSON.stringify(extracted),
+        extractionWarnings: JSON.stringify(extracted.warnings),
       },
     });
+    processingRecordId = record.id;
 
     // Lab values → rows + time-series metrics.
     for (const value of extracted.labValues) {
@@ -128,6 +146,14 @@ export async function uploadRecordAction(_prevState: UploadState, formData: Form
             unit: value.unit,
             referenceRange: value.referenceRange,
             status: value.status,
+            sourceText: value.sourceText,
+            sourcePage: value.sourcePage,
+            confidence: value.confidence,
+            reviewStatus: value.confidence >= 0.75 && value.status !== "UNKNOWN" ? "EXTRACTED" : "NEEDS_REVIEW",
+            classificationReason: value.classificationReason,
+            classificationRuleVersion: value.classificationRuleVersion,
+            criticalFlag: value.criticalFlag,
+            warnings: JSON.stringify(value.warnings),
             date: recordDate,
           },
         });
@@ -144,6 +170,14 @@ export async function uploadRecordAction(_prevState: UploadState, formData: Form
           unit: value.unit,
           referenceRange: value.referenceRange,
           status: value.status,
+          sourceText: value.sourceText,
+          sourcePage: value.sourcePage,
+          confidence: value.confidence,
+          reviewStatus: value.confidence >= 0.75 && value.status !== "UNKNOWN" ? "EXTRACTED" : "NEEDS_REVIEW",
+          classificationReason: value.classificationReason,
+          classificationRuleVersion: value.classificationRuleVersion,
+          criticalFlag: value.criticalFlag,
+          warnings: JSON.stringify(value.warnings),
           date: recordDate,
         },
       });
@@ -221,9 +255,19 @@ export async function uploadRecordAction(_prevState: UploadState, formData: Form
     revalidatePath("/medications");
     return { ok: true, recordId: record.id };
   } catch (error) {
-    console.error("[upload] processing failed", error);
+    console.error("[upload] processing failed", error instanceof DocumentInputError ? error.code : "UNEXPECTED_ERROR");
+    if (processingRecordId) {
+      try {
+        await prisma.$transaction([
+          prisma.healthMetric.deleteMany({ where: { sourceRecordId: processingRecordId } }),
+          prisma.healthRecord.deleteMany({ where: { id: processingRecordId, profileId } }),
+        ]);
+      } catch {
+        console.error("[upload] partial-record cleanup failed");
+      }
+    }
     await removeUploadedFile(stored.relativePath);
-    return { ok: false, error: "PROCESSING_FAILED" };
+    return { ok: false, error: error instanceof DocumentInputError ? error.code : "PROCESSING_FAILED" };
   }
 }
 
@@ -310,18 +354,35 @@ export async function saveRecordCorrectionAction(input: unknown) {
   if (target === "labResult" && targetId) {
     const lab = await prisma.labResult.findFirst({ where: { id: targetId, healthRecordId: record.id } });
     if (!lab) return { ok: false as const, error: "NOT_FOUND" };
-    const numeric = typeof value === "number" ? value : Number.parseFloat(value);
-    const referenceRange = field === "referenceRange" ? String(value) : lab.referenceRange;
+    const newValue = field === "value" ? String(value).trim() : lab.value;
+    const newUnit = field === "unit" ? String(value).trim() : lab.unit;
+    const referenceRange = field === "referenceRange" ? String(value).trim() : lab.referenceRange;
+    const numericMatch = newValue.match(/^-?\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?$/);
+    const numeric = numericMatch
+      ? Number(newValue.includes("/") ? newValue.split("/")[0].trim() : newValue)
+      : null;
+    const classification = classifyLabResult({
+      value: numeric,
+      unit: newUnit,
+      referenceRange,
+      sourceFlag: lab.criticalFlag ? "CRITICAL" : null,
+      confidence: 1,
+    });
     await prisma.labResult.update({
       where: { id: lab.id },
       data: {
-        [field === "value" ? "value" : field]: field === "value" ? String(value) : String(value),
-        numericValue: Number.isFinite(numeric) ? numeric : lab.numericValue,
-        status: evaluateAgainstRange(Number.isFinite(numeric) ? numeric : lab.numericValue, referenceRange),
+        ...(field === "value" ? { value: newValue } : {}),
+        ...(field === "unit" ? { unit: newUnit } : {}),
+        ...(field === "referenceRange" ? { referenceRange } : {}),
+        numericValue: numeric,
+        status: classification.status,
+        classificationReason: classification.reason,
+        classificationRuleVersion: "report-range-v1",
+        reviewStatus: "CONFIRMED",
         isVerified: true,
       },
     });
-    await syncMetricFromLab(record.profileId, record.id, lab.testName, Number.isFinite(numeric) ? numeric : null);
+    await syncMetricFromLab(record.profileId, record.id, lab.testName, numeric);
   } else if (target === "medication" && targetId) {
     const medication = await prisma.medication.findFirst({ where: { id: targetId, healthRecordId: record.id } });
     if (!medication) return { ok: false as const, error: "NOT_FOUND" };

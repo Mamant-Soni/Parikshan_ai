@@ -140,35 +140,127 @@ export function metricKeyForTestName(testName: string): MetricKey | null {
  * hardcoding numbers) documents that decision and gives one place to plug in a
  * licensed reference-range source later.
  */
-export function parseReferenceRange(
-  referenceRange: string | null | undefined,
-): { low: number; high: number } | null {
+export const CLASSIFICATION_RULE_VERSION = "report-range-v1";
+
+export type ParsedReferenceRange = {
+  low: number;
+  high: number;
+  unit?: string;
+  lowInclusive: boolean;
+  highInclusive: boolean;
+};
+
+const RANGE_UNIT = "([A-Za-zµμ%0-9/^³]+(?:\\s*[A-Za-zµμ%0-9/^³]+)?)?";
+
+/** Parse numeric intervals and inequalities without inventing a range. */
+export function parseReferenceRange(referenceRange: string | null | undefined): ParsedReferenceRange | null {
   if (!referenceRange) return null;
-  const cleaned = referenceRange.replace(/[–—]/g, "-").replace(/(\d),(\d)/g, "$1$2");
-  const match = cleaned.match(/(-?\d+(?:\.\d+)?)\s*(?:-|to)\s*(-?\d+(?:\.\d+)?)/i);
-  if (match) {
-    const low = Number(match[1]);
-    const high = Number(match[2]);
-    if (Number.isFinite(low) && Number.isFinite(high)) return { low, high };
+  const cleaned = referenceRange.trim().replace(/[–—]/g, "-").replace(/(\d),(\d)/g, "$1$2");
+  const inequality = cleaned.match(/^(<=|>=|<|>|≤|≥)\s*(-?\d+(?:\.\d+)?)\s*([A-Za-zµμ%0-9/^³]+(?:\s*[A-Za-zµμ%0-9/^³]+)?)?$/);
+  if (inequality) {
+    const operator = inequality[1];
+    const number = Number(inequality[2]);
+    const unit = inequality[3]?.trim();
+    if (!Number.isFinite(number)) return null;
+    if (operator === "<" || operator === "<=" || operator === "≤") {
+      return { low: Number.NEGATIVE_INFINITY, high: number, unit, lowInclusive: false, highInclusive: operator !== "<" };
+    }
+    return { low: number, high: Number.POSITIVE_INFINITY, unit, lowInclusive: operator !== ">", highInclusive: false };
   }
-  const lessThan = cleaned.match(/<\s*(-?\d+(?:\.\d+)?)/);
-  if (lessThan) return { low: Number.NEGATIVE_INFINITY, high: Number(lessThan[1]) };
-  const greaterThan = cleaned.match(/>\s*(-?\d+(?:\.\d+)?)/);
-  if (greaterThan) return { low: Number(greaterThan[1]), high: Number.POSITIVE_INFINITY };
-  return null;
+  const interval = cleaned.match(new RegExp(`^\\s*(-?\\d+(?:\\.\\d+)?)\\s*(?:-|to)\\s*(-?\\d+(?:\\.\\d+)?)\\s*${RANGE_UNIT}\\s*$`, "i"));
+  if (!interval) return null;
+  const low = Number(interval[1]);
+  const high = Number(interval[2]);
+  if (!Number.isFinite(low) || !Number.isFinite(high) || low > high) return null;
+  return { low, high, unit: interval[3]?.trim() || undefined, lowInclusive: true, highInclusive: true };
 }
 
-/** Classifies a value against the range printed on the report. */
+const UNIT_ALIASES: Record<string, string> = {
+  "gm/dl": "g/dl", "g/dl": "g/dl", "g/l": "g/l",
+  "mg/dl": "mg/dl", "mg/l": "mg/l", "mmol/l": "mmol/l",
+  "ng/ml": "ng/ml", "pg/ml": "pg/ml", "uiu/ml": "uiu/ml", "µiu/ml": "uiu/ml", "μiu/ml": "uiu/ml",
+  "miu/l": "miu/l", "iu/l": "iu/l", "%": "%", "bpm": "bpm", "mmhg": "mmhg",
+  "kg": "kg", "g": "g", "cm": "cm", "fl": "fl", "pg": "pg", "sec": "sec",
+  "10^3/ul": "10^3/ul", "10³/µl": "10^3/ul", "10^3/µl": "10^3/ul",
+  "cells/ul": "cells/ul", "cells/µl": "cells/ul", "million/ul": "million/ul", "million/µl": "million/ul",
+};
+
+export function normalizeClinicalUnit(unit: string | null | undefined): string | null {
+  if (!unit?.trim()) return null;
+  const cleaned = unit.toLowerCase().replace(/μ/g, "µ").replace(/\s+/g, "");
+  return UNIT_ALIASES[cleaned] ?? cleaned;
+}
+
+export function unitsCompatible(resultUnit: string | null | undefined, rangeUnit: string | null | undefined): boolean {
+  if (!rangeUnit) return true;
+  if (!resultUnit) return false;
+  return normalizeClinicalUnit(resultUnit) === normalizeClinicalUnit(rangeUnit);
+}
+
+/** Compare only against a range supplied by the same report; no generic thresholds. */
 export function evaluateAgainstRange(
   value: number | null | undefined,
   referenceRange: string | null | undefined,
+  valueUnit?: string | null,
 ): ResultStatus {
   if (value === null || value === undefined || !Number.isFinite(value)) return "UNKNOWN";
   const range = parseReferenceRange(referenceRange);
-  if (!range) return "UNKNOWN";
-  if (value < range.low) return "BELOW_RANGE";
-  if (value > range.high) return "ABOVE_RANGE";
+  if (!range || !unitsCompatible(valueUnit, range.unit)) return "UNKNOWN";
+  if (value < range.low || (value === range.low && !range.lowInclusive)) return "BELOW_RANGE";
+  if (value > range.high || (value === range.high && !range.highInclusive)) return "ABOVE_RANGE";
   return "WITHIN_RANGE";
+}
+
+export type LabClassification = {
+  status: ResultStatus;
+  reason: string;
+  criticalFlag: boolean;
+};
+
+/**
+ * Deterministic report rule. Red is reserved for a high-confidence critical/panic
+ * mark explicitly printed by the source laboratory. Generic out-of-range values
+ * are orange, and no clinical thresholds are invented here.
+ */
+export function classifyLabResult(input: {
+  value: number | null | undefined;
+  unit?: string | null;
+  referenceRange?: string | null;
+  sourceFlag?: string | null;
+  confidence?: number;
+}): LabClassification {
+  const flag = input.sourceFlag?.trim().toUpperCase() ?? "";
+  const criticalFlag = /^(?:HH|LL|CRIT(?:ICAL)?|PANIC|CRITICAL\s+(?:HIGH|LOW))$/.test(flag);
+  const confidence = input.confidence ?? 1;
+  if (criticalFlag && confidence >= 0.65) {
+    return { status: "CRITICAL", reason: "The source report explicitly flags this result as critical.", criticalFlag: true };
+  }
+  if (input.value === null || input.value === undefined || !Number.isFinite(input.value)) {
+    return { status: "UNKNOWN", reason: "The result is not a reliably parsed numeric value.", criticalFlag };
+  }
+  if (confidence < 0.65) {
+    return { status: "UNKNOWN", reason: "Low extraction confidence; review the source before interpreting this result.", criticalFlag };
+  }
+
+  const parsedRange = parseReferenceRange(input.referenceRange);
+  if (parsedRange?.unit && !unitsCompatible(input.unit, parsedRange.unit)) {
+    return { status: "UNKNOWN", reason: "The result unit and reference-range unit are missing or incompatible.", criticalFlag: false };
+  }
+  const status = evaluateAgainstRange(input.value, input.referenceRange, input.unit);
+  if (status === "WITHIN_RANGE") {
+    return { status, reason: "The result is within the reference range printed on this report.", criticalFlag: false };
+  }
+  if (status === "BELOW_RANGE" || status === "ABOVE_RANGE") {
+    return { status, reason: `The result is ${status === "BELOW_RANGE" ? "below" : "above"} the reference range printed on this report.`, criticalFlag: false };
+  }
+
+  if (/^(?:H|HIGH|↑)$/.test(flag)) {
+    return { status: "ABOVE_RANGE", reason: "The source report flags this result high; no parseable reference range was available.", criticalFlag: false };
+  }
+  if (/^(?:L|LOW|↓)$/.test(flag)) {
+    return { status: "BELOW_RANGE", reason: "The source report flags this result low; no parseable reference range was available.", criticalFlag: false };
+  }
+  return { status: "UNKNOWN", reason: "No compatible reference range or explicit interpretation was available.", criticalFlag: false };
 }
 
 export type TrendPoint = { date: Date; value: number; unit: string; recordId?: string | null };
@@ -202,7 +294,7 @@ export function buildTrend(
     change,
     direction,
     referenceRange: referenceRange ?? null,
-    status: evaluateAgainstRange(latest?.value, referenceRange),
+    status: evaluateAgainstRange(latest?.value, referenceRange, latest?.unit),
   };
 }
 
