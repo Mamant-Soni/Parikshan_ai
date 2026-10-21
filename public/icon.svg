@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Personal Health Copilot">
+  <rect width="512" height="512" rx="112" fill="#15816f" />
+  <path d="M256 392c-8 0-15-3-21-9-38-36-96-84-96-146 0-44 34-77 76-77 22 0 42 10 55 27 13-17 33-27 55-27 42 0 76 33 76 77 0 62-58 110-96 146-6 6-13 9-21 9z" fill="#ffffff" opacity="0.75" />
+  <path d="M256 300v-44h-44v-44h44v-44h44v44h44v44h-44v44z" fill="#15816f" />
+</svg>
